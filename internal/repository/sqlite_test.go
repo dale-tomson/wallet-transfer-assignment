@@ -300,7 +300,7 @@ func TestIdempotencyLifecycle_TableDriven(t *testing.T) {
 		{
 			name: "1. initial reservation marks IN_PROGRESS",
 			action: func() error {
-				rec, err := idempRepo.Reserve(ctx, nil, key, hashA, 10*time.Second)
+				rec, err := idempRepo.Reserve(ctx, key, hashA, 10*time.Second)
 				if err != nil {
 					return err
 				}
@@ -314,7 +314,7 @@ func TestIdempotencyLifecycle_TableDriven(t *testing.T) {
 		{
 			name: "2. concurrent active lease returns ErrConcurrentRequest",
 			action: func() error {
-				_, err := idempRepo.Reserve(ctx, nil, key, hashA, 10*time.Second)
+				_, err := idempRepo.Reserve(ctx, key, hashA, 10*time.Second)
 				return err
 			},
 			expectedError: domain.ErrConcurrentRequest,
@@ -329,7 +329,7 @@ func TestIdempotencyLifecycle_TableDriven(t *testing.T) {
 		{
 			name: "4. matching replayed request returns cached response",
 			action: func() error {
-				rec, err := idempRepo.Reserve(ctx, nil, key, hashA, 10*time.Second)
+				rec, err := idempRepo.Reserve(ctx, key, hashA, 10*time.Second)
 				if err != nil {
 					return err
 				}
@@ -343,7 +343,7 @@ func TestIdempotencyLifecycle_TableDriven(t *testing.T) {
 		{
 			name: "5. replayed request with altered payload returns ErrIdempotencyKeyConflict",
 			action: func() error {
-				_, err := idempRepo.Reserve(ctx, nil, key, hashB, 10*time.Second)
+				_, err := idempRepo.Reserve(ctx, key, hashB, 10*time.Second)
 				return err
 			},
 			expectedError: domain.ErrIdempotencyKeyConflict,
@@ -379,12 +379,12 @@ func TestIdempotencyCrashRecoveryAndRetry_TableDriven(t *testing.T) {
 			run: func(t *testing.T, idempRepo *SQLIdempotencyRepository) {
 				crashedKey := "crashed_" + uuid.NewString()
 				// Negative TTL simulates past lease expiration
-				rec, err := idempRepo.Reserve(ctx, nil, crashedKey, "hash_crash", -1*time.Second)
+				rec, err := idempRepo.Reserve(ctx, crashedKey, "hash_crash", -1*time.Second)
 				require.NoError(t, err)
 				assert.Equal(t, domain.IdempotencyStatusInProgress, rec.Status)
 
 				// Next reservation should reclaim expired lease
-				reclaimed, err := idempRepo.Reserve(ctx, nil, crashedKey, "hash_crash", 5*time.Second)
+				reclaimed, err := idempRepo.Reserve(ctx, crashedKey, "hash_crash", 5*time.Second)
 				require.NoError(t, err)
 				assert.Equal(t, domain.IdempotencyStatusInProgress, reclaimed.Status)
 			},
@@ -393,13 +393,13 @@ func TestIdempotencyCrashRecoveryAndRetry_TableDriven(t *testing.T) {
 			name: "failed retry: released/failed key can be safely retried",
 			run: func(t *testing.T, idempRepo *SQLIdempotencyRepository) {
 				failedKey := "failed_" + uuid.NewString()
-				_, err := idempRepo.Reserve(ctx, nil, failedKey, "hash_failed", 5*time.Second)
+				_, err := idempRepo.Reserve(ctx, failedKey, "hash_failed", 5*time.Second)
 				require.NoError(t, err)
 
-				err = idempRepo.ReleaseOrSetFailed(ctx, nil, failedKey)
+				err = idempRepo.Release(ctx, failedKey)
 				require.NoError(t, err)
 
-				retried, err := idempRepo.Reserve(ctx, nil, failedKey, "hash_failed", 5*time.Second)
+				retried, err := idempRepo.Reserve(ctx, failedKey, "hash_failed", 5*time.Second)
 				require.NoError(t, err)
 				assert.Equal(t, domain.IdempotencyStatusInProgress, retried.Status)
 			},

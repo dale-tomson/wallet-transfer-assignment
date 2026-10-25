@@ -135,6 +135,14 @@ func NewSQLWalletRepository(db *sql.DB) *SQLWalletRepository {
 	return &SQLWalletRepository{db: db}
 }
 
+func (r *SQLWalletRepository) Create(ctx context.Context, tx *sql.Tx, wallet *domain.Wallet) error {
+	return r.CreateWallet(ctx, tx, wallet)
+}
+
+func (r *SQLWalletRepository) GetByID(ctx context.Context, tx *sql.Tx, id string) (*domain.Wallet, error) {
+	return r.GetWalletForUpdate(ctx, tx, id)
+}
+
 func (r *SQLWalletRepository) CreateWallet(ctx context.Context, tx *sql.Tx, wallet *domain.Wallet) error {
 	execer := getExecer(r.db, tx)
 	query := `
@@ -333,7 +341,6 @@ func NewSQLIdempotencyRepository(db *sql.DB) *SQLIdempotencyRepository {
 
 func (r *SQLIdempotencyRepository) Reserve(
 	ctx context.Context,
-	tx *sql.Tx,
 	key string,
 	requestHash string,
 	ttl time.Duration,
@@ -342,7 +349,6 @@ func (r *SQLIdempotencyRepository) Reserve(
 		return nil, domain.ErrIdempotencyKeyRequired
 	}
 
-	execer := getExecer(r.db, tx)
 	now := time.Now().UTC()
 	lockUntil := now.Add(ttl)
 
@@ -359,7 +365,7 @@ func (r *SQLIdempotencyRepository) Reserve(
 		respBody sql.NullString
 	)
 
-	err := execer.QueryRowContext(ctx, selectQuery, key).Scan(
+	err := r.db.QueryRowContext(ctx, selectQuery, key).Scan(
 		&rec.Key,
 		&rec.RequestHash,
 		&status,
@@ -395,7 +401,7 @@ func (r *SQLIdempotencyRepository) Reserve(
 				SET request_hash = ?, status = 'IN_PROGRESS', locked_until = ?, response_code = NULL, response_body = NULL
 				WHERE key = ?;
 			`
-			if _, err := execer.ExecContext(ctx, updateQuery, requestHash, lockUntil, key); err != nil {
+			if _, err := r.db.ExecContext(ctx, updateQuery, requestHash, lockUntil, key); err != nil {
 				return nil, fmt.Errorf("failed to reclaim expired idempotency lease: %w", err)
 			}
 			rec.RequestHash = requestHash
@@ -412,7 +418,7 @@ func (r *SQLIdempotencyRepository) Reserve(
 				SET request_hash = ?, status = 'IN_PROGRESS', locked_until = ?, response_code = NULL, response_body = NULL
 				WHERE key = ?;
 			`
-			if _, err := execer.ExecContext(ctx, updateQuery, requestHash, lockUntil, key); err != nil {
+			if _, err := r.db.ExecContext(ctx, updateQuery, requestHash, lockUntil, key); err != nil {
 				return nil, fmt.Errorf("failed to re-reserve failed idempotency key: %w", err)
 			}
 			rec.RequestHash = requestHash
@@ -436,7 +442,7 @@ func (r *SQLIdempotencyRepository) Reserve(
 		INSERT INTO idempotency_records (key, request_hash, status, created_at, locked_until)
 		VALUES (?, ?, 'IN_PROGRESS', ?, ?);
 	`
-	if _, err := execer.ExecContext(ctx, insertQuery, key, requestHash, now, lockUntil); err != nil {
+	if _, err := r.db.ExecContext(ctx, insertQuery, key, requestHash, now, lockUntil); err != nil {
 		return nil, fmt.Errorf("failed to insert idempotency record: %w", err)
 	}
 
@@ -465,6 +471,10 @@ func (r *SQLIdempotencyRepository) Resolve(ctx context.Context, tx *sql.Tx, key 
 		return fmt.Errorf("idempotency record %q not found to resolve", key)
 	}
 	return nil
+}
+
+func (r *SQLIdempotencyRepository) Release(ctx context.Context, key string) error {
+	return r.ReleaseOrSetFailed(ctx, nil, key)
 }
 
 func (r *SQLIdempotencyRepository) ReleaseOrSetFailed(ctx context.Context, tx *sql.Tx, key string) error {
