@@ -443,6 +443,10 @@ func (r *SQLIdempotencyRepository) Reserve(
 		VALUES (?, ?, 'IN_PROGRESS', ?, ?);
 	`
 	if _, err := r.db.ExecContext(ctx, insertQuery, key, requestHash, now, lockUntil); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique constraint") {
+			// Another concurrent request just inserted this key. Re-query to return cached response or ErrConcurrentRequest.
+			return r.Reserve(ctx, key, requestHash, ttl)
+		}
 		return nil, fmt.Errorf("failed to insert idempotency record: %w", err)
 	}
 
